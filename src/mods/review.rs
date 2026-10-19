@@ -66,8 +66,7 @@ fn looks_like_rev_syntax(tok: &str) -> bool {
 /// name a file on disk and git resolves it (a branch name, a short sha…).
 fn looks_like_rev(cwd: &Path, tok: &str) -> bool {
     looks_like_rev_syntax(tok)
-        || (!cwd.join(tok).exists()
-            && git(cwd, &["rev-parse", "--verify", "--quiet", tok]).is_ok())
+        || (!cwd.join(tok).exists() && git(cwd, &["rev-parse", "--verify", "--quiet", tok]).is_ok())
 }
 
 /// Parsed `/review` or `/simplify` arguments.
@@ -78,7 +77,11 @@ struct Targets {
 }
 
 fn parse_targets(cwd: &Path, argv: &[&str]) -> Targets {
-    let mut t = Targets { staged: false, rev: None, files: Vec::new() };
+    let mut t = Targets {
+        staged: false,
+        rev: None,
+        files: Vec::new(),
+    };
     for tok in argv {
         if *tok == "--staged" || *tok == "--cached" {
             t.staged = true;
@@ -118,7 +121,11 @@ fn run_diff(cwd: &Path, t: &Targets, extra: &[&str]) -> Result<String, String> {
         Err(e) if t.rev.is_none() && !t.staged => {
             let a = git(cwd, &["diff"]).unwrap_or_default();
             let b = git(cwd, &["diff", "--cached"]).unwrap_or_default();
-            if a.is_empty() && b.is_empty() { Err(e) } else { Ok(format!("{a}{b}")) }
+            if a.is_empty() && b.is_empty() {
+                Err(e)
+            } else {
+                Ok(format!("{a}{b}"))
+            }
         }
         Err(e) => Err(e),
     }
@@ -185,7 +192,7 @@ fn review_prompt(cwd: &Path, t: &Targets) -> Result<String, String> {
 #[derive(Debug, PartialEq)]
 struct ChangedFile {
     path: String,
-    status: char, // M A R C …
+    status: char,           // M A R C …
     added: Vec<(u32, u32)>, // new-file line ranges; empty = unknown/deletions
     known: bool,
 }
@@ -194,7 +201,9 @@ fn parse_name_status(out: &str) -> Vec<ChangedFile> {
     let mut files = Vec::new();
     for line in out.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
-        let Some(code) = parts.first().and_then(|s| s.chars().next()) else { continue };
+        let Some(code) = parts.first().and_then(|s| s.chars().next()) else {
+            continue;
+        };
         if !matches!(code, 'M' | 'A' | 'R' | 'C' | 'T') {
             continue;
         }
@@ -219,11 +228,19 @@ fn parse_name_status(out: &str) -> Vec<ChangedFile> {
 fn parse_changed_lines(diff: &str) -> Vec<(u32, u32)> {
     let mut ranges: Vec<(u32, u32)> = Vec::new();
     for line in diff.lines() {
-        let Some(rest) = line.strip_prefix("@@ ") else { continue };
-        let Some(plus) = rest.split_whitespace().nth(1) else { continue };
-        let Some(plus) = plus.strip_prefix('+') else { continue };
+        let Some(rest) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        let Some(plus) = rest.split_whitespace().nth(1) else {
+            continue;
+        };
+        let Some(plus) = plus.strip_prefix('+') else {
+            continue;
+        };
         let mut it = plus.split(',');
-        let Ok(start) = it.next().unwrap_or("0").parse::<u32>() else { continue };
+        let Ok(start) = it.next().unwrap_or("0").parse::<u32>() else {
+            continue;
+        };
         let count = it.next().and_then(|c| c.parse::<u32>().ok()).unwrap_or(1);
         if count == 0 {
             continue;
@@ -246,7 +263,12 @@ fn changed_files(cwd: &Path, t: &Targets) -> Result<Vec<ChangedFile>, String> {
         let mut files: Vec<ChangedFile> = t
             .files
             .iter()
-            .map(|p| ChangedFile { path: p.clone(), status: 'M', added: Vec::new(), known: false })
+            .map(|p| ChangedFile {
+                path: p.clone(),
+                status: 'M',
+                added: Vec::new(),
+                known: false,
+            })
             .collect();
         fill_ranges(cwd, t, &mut files);
         return Ok(files);
@@ -324,7 +346,13 @@ fn simplify_prompt(cwd: &Path, t: &Targets) -> Result<String, String> {
             let ranges: Vec<String> = f
                 .added
                 .iter()
-                .map(|(a, b)| if a == b { a.to_string() } else { format!("{a}-{b}") })
+                .map(|(a, b)| {
+                    if a == b {
+                        a.to_string()
+                    } else {
+                        format!("{a}-{b}")
+                    }
+                })
                 .collect();
             list.push_str(&format!(
                 "- {} ({}; changed lines: {})\n",
@@ -436,7 +464,9 @@ fn main_review() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
         let line = line?;
-        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(req) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let (reply, exit) = handle_review(&req);
         if let Some(reply) = reply {
             writeln!(stdout, "{reply}")?;
@@ -454,7 +484,9 @@ mod tests {
     use super::*;
 
     fn call(method: &str, params: Value) -> Value {
-        handle_review(&json!({ "id": 1, "method": method, "params": params })).0.unwrap()
+        handle_review(&json!({ "id": 1, "method": method, "params": params }))
+            .0
+            .unwrap()
     }
 
     #[test]
@@ -473,7 +505,10 @@ mod tests {
 
     #[test]
     fn zero_count_hunks_are_pure_deletions() {
-        assert_eq!(parse_changed_lines("@@ -5,3 +5,0 @@\n"), Vec::<(u32, u32)>::new());
+        assert_eq!(
+            parse_changed_lines("@@ -5,3 +5,0 @@\n"),
+            Vec::<(u32, u32)>::new()
+        );
     }
 
     #[test]
@@ -511,7 +546,12 @@ mod tests {
             "command/run",
             json!({ "name": "/review", "argv": [], "session": { "cwd": dir } }),
         );
-        assert!(r["result"]["text"].as_str().unwrap().contains("not a git repository"));
+        assert!(
+            r["result"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("not a git repository")
+        );
         assert!(r["result"].get("prompt").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

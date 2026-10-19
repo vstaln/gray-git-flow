@@ -40,7 +40,7 @@ fn manifest_gitmerge() -> Value {
 fn state_dir() -> PathBuf {
     std::env::var_os("GRAY_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".gray")))
+        .or_else(|| std::env::home_dir().map(|h| h.join(".gray")))
         .unwrap_or_else(|| PathBuf::from("."))
         .join("git-merge")
 }
@@ -79,7 +79,10 @@ fn unmerged(cwd: &str) -> Vec<String> {
 
 fn has_markers(cwd: &str, file: &str) -> bool {
     std::fs::read_to_string(Path::new(cwd).join(file))
-        .map(|s| s.lines().any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>")))
+        .map(|s| {
+            s.lines()
+                .any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>"))
+        })
         .unwrap_or(false)
 }
 
@@ -95,12 +98,19 @@ fn save_state(dir: &Path, sid: &str, cwd: &str, branch: &str, files: &[String]) 
 
 /// cwd precedence: explicit tool arg → cwd recorded by /merge → sidecar cwd.
 fn resolve_cwd(dir: &Path, args: &Value) -> String {
-    if let Some(c) = args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+    if let Some(c) = args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|c| !c.is_empty())
+    {
         return c.to_string();
     }
     if let Ok(s) = std::fs::read_to_string(dir.join("last.json"))
         && let Ok(v) = serde_json::from_str::<Value>(&s)
-        && let Some(c) = v.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty())
+        && let Some(c) = v
+            .get("cwd")
+            .and_then(Value::as_str)
+            .filter(|c| !c.is_empty())
     {
         return c.to_string();
     }
@@ -118,7 +128,11 @@ fn conflict_report(cwd: &str) -> String {
     for f in &files {
         out.push_str(&format!(
             "  {f}{}\n",
-            if has_markers(cwd, f) { " (markers still present)" } else { "" }
+            if has_markers(cwd, f) {
+                " (markers still present)"
+            } else {
+                ""
+            }
         ));
     }
     out.push_str("fix the <<<<<<< blocks, then git_conflicts mark-done each file");
@@ -158,12 +172,19 @@ fn git_conflicts(dir: &Path, args: &Value) -> Result<String, String> {
             }
             let left = unmerged(&cwd);
             if left.is_empty() {
-                Ok(format!("{file} staged — all conflicts resolved; commit to finish the merge"))
+                Ok(format!(
+                    "{file} staged — all conflicts resolved; commit to finish the merge"
+                ))
             } else {
-                Ok(format!("{file} staged — still unresolved: {}", left.join(", ")))
+                Ok(format!(
+                    "{file} staged — still unresolved: {}",
+                    left.join(", ")
+                ))
             }
         }
-        other => Err(format!("unknown action {other:?} — use \"list\" or \"mark-done\"")),
+        other => Err(format!(
+            "unknown action {other:?} — use \"list\" or \"mark-done\""
+        )),
     }
 }
 
@@ -199,8 +220,14 @@ fn cmd_merge(dir: &Path, argv: &[&str], sid: &str, cwd: &str) -> Value {
 fn session(params: &Value) -> (String, String) {
     let s = params.get("session").cloned().unwrap_or(Value::Null);
     (
-        s.get("id").and_then(Value::as_str).unwrap_or("").to_string(),
-        s.get("cwd").and_then(Value::as_str).unwrap_or("").to_string(),
+        s.get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        s.get("cwd")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     )
 }
 
@@ -255,7 +282,9 @@ fn main_gitmerge() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
         let line = line?;
-        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(req) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let (reply, exit) = handle_gitmerge(&req);
         if let Some(reply) = reply {
             writeln!(stdout, "{reply}")?;
@@ -279,10 +308,8 @@ mod tests {
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "gray-git-merge-test-{}-{tag}",
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("gray-git-merge-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -356,9 +383,11 @@ mod tests {
         std::fs::write(repo.join("a.txt"), "merged\n").unwrap();
         let done = git_conflicts(&state, &json!({"action": "mark-done", "file": "a.txt"})).unwrap();
         assert!(done.contains("staged"), "got: {done}");
-        assert!(git_conflicts(&state, &json!({"action": "list"}))
-            .unwrap()
-            .contains("no unresolved"));
+        assert!(
+            git_conflicts(&state, &json!({"action": "list"}))
+                .unwrap()
+                .contains("no unresolved")
+        );
         let _ = std::fs::remove_dir_all(&state);
         let _ = std::fs::remove_dir_all(&repo);
     }
@@ -370,7 +399,11 @@ mod tests {
         let cwd = repo.to_str().unwrap();
         // Undo side's change so the merge is trivial.
         assert!(run(&repo, &["checkout", "-q", "side"]).status.success());
-        assert!(run(&repo, &["reset", "-q", "--hard", "HEAD~1"]).status.success());
+        assert!(
+            run(&repo, &["reset", "-q", "--hard", "HEAD~1"])
+                .status
+                .success()
+        );
         std::fs::write(repo.join("b.txt"), "new\n").unwrap();
         assert!(run(&repo, &["add", "b.txt"]).status.success());
         assert!(run(&repo, &["commit", "-qm", "b"]).status.success());

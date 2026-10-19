@@ -142,7 +142,9 @@ fn main() -> std::io::Result<()> {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
             let Ok(line) = line else { break };
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if let Some(id) = v.get("id").and_then(Value::as_str)
                 && v.get("method").is_none()
                 && let Some(tx) = reader_pending.lock().expect("pending").remove(id)

@@ -43,7 +43,7 @@ fn manifest_checkpoint() -> Value {
 fn state_dir() -> PathBuf {
     std::env::var_os("GRAY_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".gray")))
+        .or_else(|| std::env::home_dir().map(|h| h.join(".gray")))
         .unwrap_or_else(|| PathBuf::from("."))
         .join("checkpoint")
 }
@@ -51,7 +51,13 @@ fn state_dir() -> PathBuf {
 /// Session ids are arbitrary strings; keep them filename-safe.
 fn sanitize(sid: &str) -> String {
     sid.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -79,8 +85,14 @@ fn in_repo(cwd: &str) -> bool {
 fn session(params: &Value) -> (String, String) {
     let s = params.get("session").cloned().unwrap_or(Value::Null);
     (
-        s.get("id").and_then(Value::as_str).unwrap_or("").to_string(),
-        s.get("cwd").and_then(Value::as_str).unwrap_or("").to_string(),
+        s.get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        s.get("cwd")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     )
 }
 
@@ -105,7 +117,9 @@ fn record(dir: &Path, sid: &str, cwd: &str) {
     if sid.is_empty() || !in_repo(cwd) {
         return;
     }
-    let Ok(out) = git(cwd, &["stash", "create"]) else { return };
+    let Ok(out) = git(cwd, &["stash", "create"]) else {
+        return;
+    };
     if !out.status.success() {
         return;
     }
@@ -140,7 +154,11 @@ fn apply_ref(cwd: &str, n: u64, r: &str) -> String {
             format!(
                 "restored checkpoint {n} ({}){}",
                 short(r),
-                if detail.is_empty() { String::new() } else { format!(" — {detail}") }
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {detail}")
+                }
             )
         }
         Ok(o) => format!(
@@ -190,10 +208,12 @@ fn restore_interactive(
     }
     let options: Vec<Value> = entries
         .iter()
-        .map(|(t, r)| json!({
-            "label": format!("#{t} {}", short(r)),
-            "description": r,
-        }))
+        .map(|(t, r)| {
+            json!({
+                "label": format!("#{t} {}", short(r)),
+                "description": r,
+            })
+        })
         .chain(std::iter::once(
             json!({"label": LABEL_CANCEL, "description": "don't restore anything"}),
         ))
@@ -259,7 +279,10 @@ fn run_command(
 
 /// One request → `Some(reply)`, or `None` for notifications. The bool asks
 /// the loop to exit after writing the reply. `ask` is the host/ask channel.
-pub fn handle_checkpoint(req: &Value, ask: &mut dyn FnMut(&[Value]) -> Option<Value>) -> (Option<Value>, bool) {
+pub fn handle_checkpoint(
+    req: &Value,
+    ask: &mut dyn FnMut(&[Value]) -> Option<Value>,
+) -> (Option<Value>, bool) {
     let dir = state_dir();
     let id = req.get("id").cloned();
     let method = req.get("method").and_then(Value::as_str).unwrap_or("");
@@ -349,7 +372,9 @@ fn main_checkpoint() -> std::io::Result<()> {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
             let Ok(line) = line else { break };
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if let Some(id) = v.get("id").and_then(Value::as_str)
                 && v.get("method").is_none()
                 && let Some(tx) = reader_pending.lock().expect("pending").remove(id)
@@ -389,16 +414,17 @@ mod tests {
     }
 
     fn call(method: &str, params: Value) -> Value {
-        handle_checkpoint(&json!({ "id": 1, "method": method, "params": params }), &mut no_ask())
-            .0
-            .unwrap()
+        handle_checkpoint(
+            &json!({ "id": 1, "method": method, "params": params }),
+            &mut no_ask(),
+        )
+        .0
+        .unwrap()
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "gray-checkpoint-test-{}-{tag}",
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("gray-checkpoint-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -521,16 +547,21 @@ mod tests {
         let e = read_entries(&state, "s1");
         assert_eq!(e.len(), 1);
         std::process::Command::new("git")
-            .arg("-C").arg(&repo)
+            .arg("-C")
+            .arg(&repo)
             .args(["checkout", "--", "a.txt"])
-            .output().unwrap();
+            .output()
+            .unwrap();
         let label = format!("#1 {}", short(&e[0].1));
         let mut ask = move |_: &[Value]| -> Option<Value> {
             Some(json!({"answers": {RESTORE_QID: {"answers": [label]}}}))
         };
         let msg = run_command(&state, &["restore"], "s1", cwd, &mut ask);
         assert!(msg.contains("restored checkpoint 1"), "got: {msg}");
-        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "two\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "two\n"
+        );
         let _ = std::fs::remove_dir_all(&state);
         let _ = std::fs::remove_dir_all(&repo);
     }
@@ -544,17 +575,22 @@ mod tests {
 
     #[test]
     fn turn_end_notification_records_and_stays_silent() {
-        let (reply, exit) = handle_checkpoint(&json!({
-            "method": "event/notify",
-            "params": {"type": "turn_end", "session": {"id": "x", "cwd": "/nonexistent"}}
-        }), &mut no_ask());
+        let (reply, exit) = handle_checkpoint(
+            &json!({
+                "method": "event/notify",
+                "params": {"type": "turn_end", "session": {"id": "x", "cwd": "/nonexistent"}}
+            }),
+            &mut no_ask(),
+        );
         assert!(reply.is_none() && !exit);
     }
 
     #[test]
     fn shutdown_replies_then_exits() {
-        let (reply, exit) =
-            handle_checkpoint(&json!({ "id": 2, "method": "plugin/shutdown" }), &mut no_ask());
+        let (reply, exit) = handle_checkpoint(
+            &json!({ "id": 2, "method": "plugin/shutdown" }),
+            &mut no_ask(),
+        );
         assert!(reply.is_some() && exit);
     }
 }
