@@ -50,6 +50,14 @@ fn manifest() -> Value {
         "commands": [
             "/git-flow", "/checkpoint", "/autocommit", "/merge", "/review", "/simplify",
         ],
+        "command_descriptions": {
+            "/git-flow": "list the git lifecycle commands",
+            "/checkpoint": "list or restore git stash checkpoints",
+            "/autocommit": "toggle committing changes at turn end",
+            "/merge": "merge a branch and fix conflicts",
+            "/review": "review the working-tree git diff",
+            "/simplify": "simplify the changed code",
+        },
         "hooks": ["agent/before_start"],
         "capabilities": ["host.ask"],
     })
